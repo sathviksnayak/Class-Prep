@@ -29,12 +29,12 @@ export default async function GeneratePage() {
 
           <div className="mt-8 rounded-3xl border border-[#e4eae5] bg-white p-6 shadow-sm shadow-[#edf3ee] md:p-8">
             <div className="grid gap-6 md:grid-cols-2">
-              <FormField label="Class" id="class" value="Class 9" type="select" options={[{ label: "Class 9", value: "Class 9" }, { label: "Class 10", value: "Class 10" }, { label: "Class 11", value: "Class 11" }, { label: "Class 12", value: "Class 12" }]} />
-              <FormField label="Subject" id="subject" value="Mathematics" type="select" options={[{ label: "Mathematics", value: "Mathematics" }, { label: "Science", value: "Science" }, { label: "English", value: "English" }, { label: "History", value: "History" }]} />
+              <FormField label="Class" id="class" placeholder="Enter class" />
+              <FormField label="Subject" id="subject" placeholder="Enter subject" />
               <FormField label="Chapter / Topic" id="topic" placeholder="Example: Quadratic Equations" />
-              <FormField label="Total Marks" id="marks" type="number" value={40} />
+              <FormField label="Total Marks" id="marks" type="number" placeholder="e.g. 40" />
               <FormField label="Duration" id="duration" placeholder="90 minutes" />
-              <FormField label="Difficulty" id="difficulty" type="select" value="Moderate" options={[{ label: "Moderate", value: "Moderate" }, { label: "Easy", value: "Easy" }, { label: "Advanced", value: "Advanced" }]} />
+              <FormField label="Difficulty" id="difficulty" placeholder="Choose difficulty" />
             </div>
 
             <div className="mt-8">
@@ -45,7 +45,7 @@ export default async function GeneratePage() {
                     key={type.value}
                     className="flex cursor-pointer items-center gap-3 rounded-2xl border border-[#dfe7e1] bg-[#f7faf7] px-4 py-3 text-sm text-[#1f2d27]"
                   >
-                    <input type="checkbox" defaultChecked={type.value === "mcq"} className="h-4 w-4 accent-[#2f6f4b]" />
+                    <input type="checkbox" className="h-4 w-4 accent-[#2f6f4b]" />
                     {type.label}
                   </label>
                 ))}
@@ -53,7 +53,7 @@ export default async function GeneratePage() {
             </div>
 
             <div className="mt-8 max-w-xs">
-              <FormField label="Number of Questions" id="questions" type="number" value={20} />
+              <FormField label="Number of Questions" id="questions" type="number" placeholder="e.g. 20" />
             </div>
 
             <div className="mt-8 flex flex-col gap-3 border-t border-[#e4eae5] pt-6 sm:flex-row sm:justify-end">

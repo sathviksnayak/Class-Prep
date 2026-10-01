@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  experimental: {
+    proxyClientMaxBodySize: "22mb",
+    serverActions: {
+      bodySizeLimit: "22mb",
+    },
+  },
 };
 
 export default nextConfig;

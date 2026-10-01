@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ShellGate } from "@/components/ShellGate";
+import { Providers } from "./Providers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -22,7 +23,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full bg-[#f5f8f6] text-[#1f2d27]">
-        <ShellGate>{children}</ShellGate>
+        <Providers>
+          <ShellGate>{children}</ShellGate>
+        </Providers>
       </body>
     </html>
   );

@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOut } from "next-auth/react";
 
 const navItems = [
-  { label: "Dashboard", href: "/" },
+  { label: "Dashboard", href: "/dashboard" },
   { label: "Library", href: "/library" },
   { label: "Create Test", href: "/generate" },
   { label: "My Papers", href: "/papers" },
@@ -46,9 +47,15 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto rounded-2xl border border-[#dfe7e1] bg-white p-4">
-        <p className="text-xs uppercase tracking-[0.12em] text-[#5a6a62]">Today</p>
-        <p className="mt-2 text-lg font-semibold text-[#1f2d27]">4 classes</p>
-        <p className="mt-1 text-sm text-[#5a6a62]">2 tests scheduled</p>
+        <p className="text-xs uppercase tracking-[0.12em] text-[#5a6a62]">My Papers</p>
+        <p className="mt-2 text-sm text-[#5a6a62]">Your generated paper history will appear here when available.</p>
+        <button
+          type="button"
+          onClick={() => signOut({ callbackUrl: "/login" })}
+          className="mt-4 w-full rounded-xl border border-[#d8e0d9] px-3 py-2 text-sm font-medium text-[#485b53] hover:bg-[#f5f8f6]"
+        >
+          Sign out
+        </button>
       </div>
     </aside>
   );
