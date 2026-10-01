@@ -1,76 +1,47 @@
-import { auth } from "@/auth";
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Button } from "@/components/Button";
-import { FormField } from "@/components/FormField";
-import { Header } from "@/components/Header";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
+import { type SectionDraft, type TemplateDraft } from "@/lib/test-templates";
+import { CreateTestForm } from "./CreateTestForm";
+import { TemplateHub } from "./TemplateHub";
 
-const questionTypes = [
-  { label: "MCQ", value: "mcq" },
-  { label: "Short Answer", value: "short-answer" },
-  { label: "Long Answer", value: "long-answer" },
-];
+export const dynamic = "force-dynamic";
 
-export default async function GeneratePage() {
+export default async function GeneratePage({ searchParams }: { searchParams: Promise<{ mode?: string; edit?: string }> }) {
   const session = await auth();
+  if (!session?.user?.id) redirect("/login");
+  const { mode = "hub", edit } = await searchParams;
+  const userId = session.user.id;
 
-  if (!session?.user) {
-    redirect("/login");
+  if (edit) {
+    const template = await prisma.testTemplate.findFirst({ where: { id: edit, userId } });
+    if (!template) redirect("/papers");
+    const initialDraft: TemplateDraft = {
+      name: template.name, schoolName: template.schoolName ?? "", testTitle: template.testTitle ?? "",
+      className: template.className ?? "", subject: template.subject ?? "", examName: template.examName ?? "",
+      academicYear: template.academicYear ?? "", duration: template.duration ?? "", maximumMarks: template.maximumMarks,
+      rawHeaderText: template.rawHeaderText ?? "", sections: template.sections as unknown as SectionDraft[],
+    };
+    return <main className="min-h-screen bg-[#f5f8f6] p-4 md:p-8"><div className="mx-auto max-w-4xl"><Link href="/papers" className="text-sm font-medium text-[#2f6f4b] hover:underline">← My Templates</Link><h1 className="mt-3 text-3xl font-semibold tracking-tight text-[#1f2d27]">Edit Test Template</h1><CreateTestForm initialDraft={initialDraft} templateId={template.id} /></div></main>;
   }
 
-  return (
-    <div className="flex min-h-screen bg-[#f5f8f6]">
-      <div className="flex-1 p-4 md:p-8">
-        <div className="mx-auto max-w-5xl">
-          <Header
-            title="Create a new test"
-            subtitle="Design a paper with the right mix of questions, marks, and duration."
-            action={<Button variant="secondary">Save Draft</Button>}
-          />
+  if (mode === "new" || mode === "extract") {
+    return <main className="min-h-screen bg-[#f5f8f6] p-4 md:p-8"><div className="mx-auto max-w-4xl"><Link href="/generate" className="text-sm font-medium text-[#2f6f4b] hover:underline">← Create Test</Link><h1 className="mt-3 text-3xl font-semibold tracking-tight text-[#1f2d27]">{mode === "extract" ? "Extract Template from Test Paper" : "Create New Template"}</h1><p className="mt-2 text-sm text-[#5a6a62]">Create a reusable structure. Question generation will be a separate step.</p><CreateTestForm extractionEnabled={mode === "extract"} /></div></main>;
+  }
 
-          <div className="mt-8 rounded-3xl border border-[#e4eae5] bg-white p-6 shadow-sm shadow-[#edf3ee] md:p-8">
-            <div className="grid gap-6 md:grid-cols-2">
-              <FormField label="Class" id="class" placeholder="Enter class" />
-              <FormField label="Subject" id="subject" placeholder="Enter subject" />
-              <FormField label="Chapter / Topic" id="topic" placeholder="Example: Quadratic Equations" />
-              <FormField label="Total Marks" id="marks" type="number" placeholder="e.g. 40" />
-              <FormField label="Duration" id="duration" placeholder="90 minutes" />
-              <FormField label="Difficulty" id="difficulty" placeholder="Choose difficulty" />
-            </div>
+  const [ownedTemplates, docs, folders] = await Promise.all([
+    prisma.testTemplate.findMany({ where: { userId }, orderBy: { updatedAt: "desc" }, select: { id: true, name: true, sections: true, totalMarks: true, maximumMarks: true } }),
+    prisma.document.findMany({ where: { userId }, orderBy: { name: "asc" }, select: { id: true, name: true, folderId: true } }),
+    prisma.folder.findMany({ where: { userId }, select: { id: true, name: true, parentId: true } }),
+  ]);
+  const folderById = new Map(folders.map((folder) => [folder.id, folder]));
+  const resources = docs.map((doc) => {
+    const path: string[] = []; let folderId = doc.folderId;
+    while (folderId) { const folder = folderById.get(folderId); if (!folder) break; path.unshift(folder.name); folderId = folder.parentId; }
+    return { id: doc.id, name: doc.name, folderName: path.length ? path.join(" / ") : null };
+  });
+  const templates = ownedTemplates.map((template) => ({ ...template, sections: template.sections as unknown as SectionDraft[] }));
 
-            <div className="mt-8">
-              <p className="mb-3 text-sm font-medium text-[#1f2d27]">Question Types</p>
-              <div className="grid gap-3 sm:grid-cols-3">
-                {questionTypes.map((type) => (
-                  <label
-                    key={type.value}
-                    className="flex cursor-pointer items-center gap-3 rounded-2xl border border-[#dfe7e1] bg-[#f7faf7] px-4 py-3 text-sm text-[#1f2d27]"
-                  >
-                    <input type="checkbox" className="h-4 w-4 accent-[#2f6f4b]" />
-                    {type.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-8 max-w-xs">
-              <FormField label="Number of Questions" id="questions" type="number" placeholder="e.g. 20" />
-            </div>
-
-            <div className="mt-8 flex flex-col gap-3 border-t border-[#e4eae5] pt-6 sm:flex-row sm:justify-end">
-              <Button variant="secondary" className="w-full sm:w-auto">
-                Preview
-              </Button>
-              <Button className="w-full sm:w-auto" disabled>
-                Generate Test
-              </Button>
-            </div>
-
-            <p className="mt-4 text-xs text-[#5a6a62]">
-              Frontend-only placeholder: generation is not connected yet.
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return <main className="min-h-screen bg-[#f5f8f6] p-4 md:p-8"><div className="mx-auto max-w-6xl"><Link href="/papers" className="text-sm font-medium text-[#2f6f4b] hover:underline">My Papers</Link><h1 className="mt-3 text-3xl font-semibold tracking-tight text-[#1f2d27]">Create Test</h1><p className="mt-2 text-sm text-[#5a6a62]">Choose a template workflow. A template is a reusable structure, separate from its source material.</p><TemplateHub templates={templates} resources={resources} /></div></main>;
 }

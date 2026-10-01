@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useRef, useState, useTransition } from "react";
+import { type ChangeEvent, useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/Button";
 import { Breadcrumbs } from "@/components/library/Breadcrumbs";
 import { CreateFolderModal } from "@/components/library/CreateFolderModal";
@@ -22,18 +22,20 @@ import {
   uploadDocument,
 } from "./actions";
 
-type FolderRow = { id: string; name: string; parentId: string | null; createdAt: Date; updatedAt: Date };
+type FolderRow = { id: string; name: string; parentId: string | null; createdAt: Date; updatedAt: Date; _count: { documents: number; childFolders: number } };
 type DocumentRow = { id: string; name: string; type: string; size: number; folderId: string | null; createdAt: Date; updatedAt: Date };
 type BreadcrumbEntry = { id: string; name: string };
 
 type Props = {
   initialFolders: FolderRow[];
   initialDocuments: DocumentRow[];
+  initialFolderId: string | null;
+  initialBreadcrumbs: BreadcrumbEntry[];
 };
 
-export function LibraryClient({ initialFolders, initialDocuments }: Props) {
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
-  const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbEntry[]>([{ id: "root", name: "My Library" }]);
+export function LibraryClient({ initialFolders, initialDocuments, initialFolderId, initialBreadcrumbs }: Props) {
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(initialFolderId);
+  const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbEntry[]>(initialBreadcrumbs);
   const [folders, setFolders] = useState<FolderRow[]>(initialFolders);
   const [documents, setDocuments] = useState<DocumentRow[]>(initialDocuments);
   const [searchTerm, setSearchTerm] = useState("");
@@ -43,6 +45,28 @@ export function LibraryClient({ initialFolders, initialDocuments }: Props) {
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const id = new URLSearchParams(window.location.search).get("folder");
+      startTransition(async () => {
+        try {
+          if (id) {
+            const ancestors = await getFolderAncestors(id);
+            setCurrentFolderId(id);
+            setBreadcrumbs([{ id: "root", name: "My Library" }, ...ancestors]);
+            await refreshCurrent(id);
+          } else {
+            setCurrentFolderId(null);
+            setBreadcrumbs([{ id: "root", name: "My Library" }]);
+            await refreshCurrent(null);
+          }
+        } catch { setError("This folder is no longer available"); }
+      });
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const clearError = () => setError(null);
 
@@ -59,6 +83,7 @@ export function LibraryClient({ initialFolders, initialDocuments }: Props) {
     startTransition(async () => {
       try {
         const ancestors = await getFolderAncestors(folderId);
+        window.history.pushState(null, "", `/library?folder=${encodeURIComponent(folderId)}`);
         setBreadcrumbs([{ id: "root", name: "My Library" }, ...ancestors]);
         setCurrentFolderId(folderId);
         await refreshCurrent(folderId);
@@ -73,10 +98,12 @@ export function LibraryClient({ initialFolders, initialDocuments }: Props) {
     startTransition(async () => {
       try {
         if (!folderId || folderId === "root") {
+          window.history.pushState(null, "", "/library");
           setBreadcrumbs([{ id: "root", name: "My Library" }]);
           setCurrentFolderId(null);
           await refreshCurrent(null);
         } else {
+          window.history.pushState(null, "", `/library?folder=${encodeURIComponent(folderId)}`);
           const ancestors = await getFolderAncestors(folderId);
           setBreadcrumbs([{ id: "root", name: "My Library" }, ...ancestors]);
           setCurrentFolderId(folderId);
@@ -95,9 +122,9 @@ export function LibraryClient({ initialFolders, initialDocuments }: Props) {
     startTransition(async () => {
       try {
         await createFolder(name, currentFolderId);
-        await refreshCurrent(currentFolderId);
         setNewFolderName("");
         setIsCreateModalOpen(false);
+        await refreshCurrent(currentFolderId);
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Failed to create folder");
       }
@@ -266,7 +293,7 @@ export function LibraryClient({ initialFolders, initialDocuments }: Props) {
           />
 
           {/* Status / Error bar */}
-          {(error || uploadProgress || isPending) && (
+          {!isCreateModalOpen && (error || uploadProgress || isPending) && (
             <div className={`mt-4 rounded-2xl px-4 py-3 text-sm ${error ? "bg-red-50 text-red-700 border border-red-200" : "bg-[#e7f1ea] text-[#1f5d3d]"}`}>
               {error ? (
                 <div className="flex items-center justify-between">
@@ -304,7 +331,7 @@ export function LibraryClient({ initialFolders, initialDocuments }: Props) {
                       folders={filteredFolders.map((f) => ({
                         id: f.id,
                         name: f.name,
-                        itemCount: 0, // count not fetched per folder for performance
+        itemCount: f._count.documents + f._count.childFolders,
                       }))}
                       onOpenFolder={(id) => {
                         const f = folders.find((x) => x.id === id);
@@ -353,6 +380,8 @@ export function LibraryClient({ initialFolders, initialDocuments }: Props) {
         onChange={setNewFolderName}
         onClose={() => { setIsCreateModalOpen(false); setNewFolderName(""); }}
         onSubmit={handleCreateFolder}
+        error={error}
+        isPending={isPending}
       />
     </div>
   );

@@ -13,7 +13,7 @@ export function FolderCard({ name, itemCount, onOpen, onRename, onDelete }: Fold
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#edf5f0] text-xl">📁</span>
         <span className="min-w-0">
           <span className="block truncate text-base font-medium text-[#1f2d27]">{name}</span>
-          <span className="mt-1 block text-xs text-[#5a6a62]">{itemCount} items</span>
+          <span className="mt-1 block text-xs text-[#5a6a62]">{itemCount} {itemCount === 1 ? "item" : "items"}</span>
         </span>
       </button>
       <div className="relative flex items-start p-3">
