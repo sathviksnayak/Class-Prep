@@ -1,13 +1,41 @@
+import { calculateAttemptedMarks } from "./mark-calculations.js";
+
 export type QuestionTypeDraft = {
   id: string;
   type: string;
   label: string;
-  count: number;
+  count: number | null;
   attempt: number | null;
-  marksEach: number;
+  marksEach: number | null;
+  extraction?: {
+    offered: ExtractionField<number>;
+    attempt: ExtractionField<number>;
+    marksEach: ExtractionField<number>;
+    groupMarks: ExtractionField<number>;
+    sourceQuote: string;
+    choiceWording: string | null;
+    needsReview: boolean;
+    reviewReason?: string | null;
+    alternateLabel?: string | null;
+  };
 };
 
-export type SectionDraft = { id: string; name: string; questionTypes: QuestionTypeDraft[] };
+export type ExtractionStatus = "detected" | "inferred" | "needs_review" | "missing" | "edited";
+export type ExtractionField<T extends number | string = number> = { value: T | null; raw: string | null; status: ExtractionStatus; alternate?: T | null };
+export type SectionDraft = {
+  id: string;
+  name: string;
+  questionTypes: QuestionTypeDraft[];
+  implicit?: boolean;
+  extraction?: { marks: ExtractionField<number>; sourceQuote: string | null; needsReview: boolean };
+  templateExtraction?: { header: Record<string, ExtractionField<string | number>>; totalMarks: ExtractionField<number> };
+};
+export type TemplateExtractionMetadata = {
+  status: "detected" | "needs_review" | "missing";
+  warnings: string[];
+  header: Record<string, ExtractionField<string | number>>;
+  totalMarks: ExtractionField<number>;
+};
 export type TemplateDraft = {
   name: string;
   schoolName: string;
@@ -20,33 +48,54 @@ export type TemplateDraft = {
   maximumMarks: number | null;
   rawHeaderText: string;
   sections: SectionDraft[];
+  extractionMetadata?: TemplateExtractionMetadata;
 };
 
-export type TemplateTotals = { totalQuestions: number; totalMarks: number | null; sections: { id: string; totalQuestions: number; totalMarks: number | null }[] };
+export type TemplateTotals = { totalQuestions: number | null; totalMarks: number | null; sections: { id: string; totalQuestions: number | null; totalMarks: number | null }[] };
+
+export function effectiveAttemptCount(item: QuestionTypeDraft): number | null {
+  if (item.attempt !== null) return item.attempt;
+  if (!item.extraction) return item.count;
+  if (item.extraction.attempt.status === "missing" || item.extraction.attempt.status === "needs_review") return null;
+  return item.count;
+}
 
 export function calculateTemplateTotals(sections: readonly SectionDraft[]): TemplateTotals {
-  let totalQuestions = 0;
+  let totalQuestions: number | null = 0;
+  let allQuestionsKnown = true;
   let allMarksKnown = true;
-  let totalMarks = 0;
+  const totalMarkGroups: { attempt: number; marksEach: number }[] = [];
   const sectionTotals = sections.map((section) => {
     let sectionQuestions = 0;
-    let sectionMarks = 0;
+    let sectionQuestionsKnown = true;
+    const sectionMarkGroups: { attempt: number; marksEach: number }[] = [];
     let sectionMarksKnown = true;
+    if (section.questionTypes.length === 0) {
+      sectionMarksKnown = false;
+      sectionQuestionsKnown = false;
+      allQuestionsKnown = false;
+      allMarksKnown = false;
+    }
     for (const item of section.questionTypes) {
-      sectionQuestions += item.count;
-      totalQuestions += item.count;
-      if (item.attempt === null) {
+      if (item.count === null) {
+        sectionQuestionsKnown = false;
+        allQuestionsKnown = false;
+      } else {
+        sectionQuestions += item.count;
+      }
+      const attempt = effectiveAttemptCount(item);
+      if (attempt === null || item.marksEach === null) {
         sectionMarksKnown = false;
         allMarksKnown = false;
       } else {
-        const marks = item.attempt * item.marksEach;
-        sectionMarks += marks;
-        totalMarks += marks;
+        sectionMarkGroups.push({ attempt, marksEach: item.marksEach });
+        totalMarkGroups.push({ attempt, marksEach: item.marksEach });
       }
     }
-    return { id: section.id, totalQuestions: sectionQuestions, totalMarks: sectionMarksKnown ? sectionMarks : null };
+    return { id: section.id, totalQuestions: sectionQuestionsKnown ? sectionQuestions : null, totalMarks: sectionMarksKnown ? calculateAttemptedMarks(sectionMarkGroups) : null };
   });
-  return { totalQuestions, totalMarks: allMarksKnown ? totalMarks : null, sections: sectionTotals };
+  totalQuestions = allQuestionsKnown && sections.length > 0 ? sectionTotals.reduce((sum, item) => sum + (item.totalQuestions ?? 0), 0) : null;
+  return { totalQuestions, totalMarks: allMarksKnown && sections.length > 0 ? calculateAttemptedMarks(totalMarkGroups) : null, sections: sectionTotals };
 }
 
 const q = (id: string, type: string, label: string, count: number, marksEach: number): QuestionTypeDraft => ({ id, type, label, count, attempt: count, marksEach });

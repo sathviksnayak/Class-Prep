@@ -6,6 +6,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { BUILTIN_TEMPLATES, calculateTemplateTotals, cloneBuiltinTemplate, type TemplateDraft } from "@/lib/test-templates";
 import { parseTestPaperText } from "@/lib/test-paper-extraction";
+import { enrichWithStructuredModel } from "@/lib/test-paper-llm";
 
 async function requireOwner() {
   const userId = (await auth())?.user?.id;
@@ -29,22 +30,52 @@ function validateDraft(draft: TemplateDraft) {
     if (!Array.isArray(section.questionTypes)) throw new Error("Invalid question type list");
     for (const item of section.questionTypes) {
       if (!item || typeof item !== "object" || typeof item.id !== "string" || typeof item.type !== "string" || typeof item.label !== "string" || !item.label.trim() || item.label.length > 80) throw new Error("Question type names must be 1–80 characters");
-      if (!Number.isInteger(item.count) || item.count < 0 || item.count > 10000) throw new Error("Question counts must be whole numbers from 0 to 10000");
-      if (!Number.isInteger(item.marksEach) || item.marksEach < 0 || item.marksEach > 1000) throw new Error("Marks per question must be a whole number from 0 to 1000");
-      if (item.attempt !== null && (!Number.isInteger(item.attempt) || item.attempt < 0 || item.attempt > item.count)) throw new Error("Attempt count must be between 0 and the number of questions offered");
-      if (item.attempt === null) throw new Error(`Set the attempt count for ${item.label} before saving`);
+      if (item.count !== null && (!Number.isInteger(item.count) || item.count < 0 || item.count > 10000)) throw new Error("Question counts must be whole numbers from 0 to 10000");
+      if (item.marksEach !== null && (!Number.isFinite(item.marksEach) || item.marksEach < 0 || item.marksEach > 1000)) throw new Error("Marks per question must be a number from 0 to 1000");
+      if (item.attempt !== null && (!Number.isInteger(item.attempt) || item.attempt < 0 || (item.count !== null && item.attempt > item.count))) throw new Error("Attempt count must be between 0 and the number of questions offered");
     }
   }
-  if (draft.maximumMarks !== null && (!Number.isInteger(draft.maximumMarks) || draft.maximumMarks < 0 || draft.maximumMarks > 10000)) throw new Error("Maximum marks must be a whole number from 0 to 10000");
+  if (draft.maximumMarks !== null && (!Number.isFinite(draft.maximumMarks) || draft.maximumMarks < 0 || draft.maximumMarks > 10000)) throw new Error("Maximum marks must be a number from 0 to 10000");
   const totals = calculateTemplateTotals(draft.sections);
-  if (!totals.totalQuestions) throw new Error("Add at least one question to the template");
-  return { ...draft, name: draft.name.trim(), totalMarks: totals.totalMarks ?? 0 };
+  if (!draft.sections.some((section) => section.questionTypes.length > 0)) throw new Error("Add at least one question group to the template");
+  return { ...draft, name: draft.name.trim(), totalMarks: totals.totalMarks };
 }
 
 export async function saveTestTemplate(draft: TemplateDraft, templateId?: string) {
   const userId = await requireOwner();
   const validated = validateDraft(draft);
   const { totalMarks, ...fields } = validated;
+  const totals = calculateTemplateTotals(fields.sections);
+  const storedSections = fields.sections.map((section) => {
+    const total = totals.sections.find((item) => item.id === section.id)?.totalMarks ?? null;
+    if (!section.extraction) return { ...section };
+    const hasEditedGroup = section.questionTypes.some((item) =>
+      Object.values(item.extraction ?? {}).some((value) => value && typeof value === "object" && "status" in value && value.status === "edited"),
+    );
+    return {
+      ...section,
+      extraction: {
+        ...section.extraction,
+        marks: {
+          value: total,
+          raw: total === null ? section.extraction.marks.raw : String(total),
+          status: total === null ? "needs_review" as const : hasEditedGroup ? "edited" as const : "inferred" as const,
+        },
+        needsReview: total === null || section.questionTypes.some((item) => item.extraction?.needsReview),
+      },
+    };
+  });
+  if (fields.extractionMetadata && storedSections.length) {
+    const totalMarksField = {
+      value: totalMarks,
+      raw: totalMarks === null ? null : String(totalMarks),
+      status: totalMarks === null ? "needs_review" as const : "inferred" as const,
+    };
+    storedSections[0] = {
+      ...storedSections[0],
+      templateExtraction: { header: fields.extractionMetadata.header, totalMarks: totalMarksField },
+    };
+  }
   const data = {
     name: fields.name,
     schoolName: fields.schoolName.trim() || null,
@@ -55,9 +86,11 @@ export async function saveTestTemplate(draft: TemplateDraft, templateId?: string
     academicYear: fields.academicYear.trim() || null,
     duration: fields.duration.trim() || null,
     maximumMarks: fields.maximumMarks,
-    totalMarks,
+    // The JSON sections are authoritative; this legacy non-null aggregate is
+    // refreshed only when a total is known. Null states remain in the JSON.
+    ...(totalMarks === null ? {} : { totalMarks }),
     rawHeaderText: fields.rawHeaderText.trim() || null,
-    sections: fields.sections as unknown as Prisma.InputJsonValue,
+    sections: storedSections as unknown as Prisma.InputJsonValue,
   };
   if (templateId) {
     const owned = await prisma.testTemplate.findFirst({ where: { id: templateId, userId }, select: { id: true } });
@@ -122,18 +155,51 @@ export async function extractTestPaper(formData: FormData) {
   if (extension !== "pdf" && extension !== "docx") throw new Error("Upload a PDF or DOCX test paper");
   const buffer = Buffer.from(await file.arrayBuffer());
   let text = "";
+  let pageCount = 1;
   if (extension === "pdf") {
-    const { PDFParse } = await import("pdf-parse");
-    const parser = new PDFParse({ data: buffer });
-    try { text = (await parser.getText()).text; } finally { await parser.destroy(); }
+    try {
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: buffer });
+      try {
+        const result = await parser.getText();
+        text = result.text;
+        pageCount = result.total || 1;
+      } finally { await parser.destroy(); }
+    } catch {
+      throw new Error("We couldn't read this PDF. Please try another readable PDF or create the template manually.");
+    }
   } else {
-    const mammoth = await import("mammoth");
-    text = (await mammoth.extractRawText({ buffer })).value;
+    try {
+      const mammoth = await import("mammoth");
+      text = (await mammoth.extractRawText({ buffer })).value;
+    } catch {
+      throw new Error("We couldn't read this DOCX file. Please check that it opens correctly, or create the template manually.");
+    }
   }
-  const parsed = parseTestPaperText(text, file.name);
+  const parsed = parseTestPaperText(text, file.name, pageCount);
+  parsed.sections = await enrichWithStructuredModel(text, parsed.normalizedText, parsed.sections);
+  const hasModelConflict = parsed.sections.some((section) => section.questionTypes.some((item) => item.extraction?.needsReview));
+  if (hasModelConflict && parsed.extractionMetadata) {
+    parsed.extractionMetadata.status = "needs_review";
+    parsed.extractionMetadata.warnings = [...new Set([
+      ...parsed.extractionMetadata.warnings,
+      "A structured extraction suggestion conflicted with the document text. The deterministic values were kept; review the highlighted question groups.",
+    ])];
+  }
+  const hasDetectedHeading = Boolean(parsed.schoolName || parsed.testTitle || parsed.className || parsed.subject || parsed.duration || parsed.maximumMarks !== null);
   return {
     draft: parsed,
-    warning: parsed.hasText ? null : "No readable text was extracted. This may be a scanned/image-only paper; OCR is not supported. Keep the selected original and enter the structure manually.",
+    warning: !parsed.hasText
+      ? extension === "pdf"
+        ? "Text could not be reliably extracted from this PDF. OCR is not currently supported. Create the template manually."
+        : "No readable text was found in this DOCX file. Please check the document or create the template manually."
+      : parsed.extractionMetadata?.warnings.length
+        ? parsed.extractionMetadata.warnings.join(" ")
+        : !hasDetectedHeading
+        ? "The text was extracted, but we couldn't confidently detect the paper heading. Review the blank fields and raw header before saving."
+        : "Here's what we detected from the paper. Please review it before saving. Some information may be blank if it wasn't clear in the document.",
+    needsReview: parsed.extractionMetadata?.status !== "detected",
     extractedText: text.slice(0, 30000),
+    hasText: parsed.hasText,
   };
 }

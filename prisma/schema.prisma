@@ -19,6 +19,7 @@ model User {
   folders       Folder[]
   documents     Document[]
   testTemplates TestTemplate[]
+  generatedPapers GeneratedPaper[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -110,14 +111,34 @@ model TestTemplate {
   examName      String?
   academicYear  String?
   duration      String?
-  maximumMarks  Int?
-  totalMarks    Int      @default(0)
+  maximumMarks  Float?
+  totalMarks    Float    @default(0)
   sections      Json     @default("[]")
   rawHeaderText String?  @db.Text
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generatedPapers GeneratedPaper[]
 
   @@index([userId])
+}
+
+model GeneratedPaper {
+  id               String   @id @default(uuid())
+  userId           String
+  templateId       String?
+  templateSnapshot Json
+  configuration    Json
+  paper            Json
+  validation       Json
+  status           String   @default("review")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  template TestTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([userId, updatedAt])
+  @@index([templateId])
 }

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { auth } from "@/auth";
 import { Button } from "@/components/Button";
 import { Header } from "@/components/Header";
@@ -11,9 +12,10 @@ export const dynamic = "force-dynamic";
 export default async function PapersPage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
-  const templates = await prisma.testTemplate.findMany({
-    where: { userId: session.user.id }, orderBy: { updatedAt: "desc" },
-  });
+  const [templates, generatedPapers] = await Promise.all([
+    prisma.testTemplate.findMany({ where: { userId: session.user.id }, orderBy: { updatedAt: "desc" } }),
+    prisma.generatedPaper.findMany({ where: { userId: session.user.id }, orderBy: { updatedAt: "desc" }, take: 20, select: { id: true, status: true, updatedAt: true, paper: true } }),
+  ]);
 
   return (
     <div className="flex min-h-screen bg-[#f5f8f6]">
@@ -33,9 +35,16 @@ export default async function PapersPage() {
             {templates.length ? <ul className="divide-y divide-[#edf1ee]">{templates.map((template) => {
               const sections = template.sections as unknown as SectionDraft[];
               const totals = calculateTemplateTotals(sections);
-              const summary = sections.map((section) => `${section.name}: ${section.questionTypes.map((item) => `${item.label} ${item.count} offered/${item.attempt ?? "?"} attempt × ${item.marksEach}`).join(", ")}`).join(" · ");
-              return <li key={template.id} className="py-4 first:pt-0 last:pb-0"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><h3 className="font-medium text-[#1f2d27]">{template.name}</h3><p className="mt-1 text-sm text-[#5a6a62]">{totals.totalQuestions} questions offered · {totals.totalMarks ?? "Review attempt counts"} calculated marks{template.maximumMarks !== null ? ` · Paper header: ${template.maximumMarks} marks` : ""}</p><p className="mt-1 text-xs text-[#718078]">{summary || "No question structure"}</p><div className="mt-3"><TemplateActions templateId={template.id} templateName={template.name} /></div></div><time className="text-xs text-[#718078]">{template.updatedAt.toLocaleDateString()}</time></div></li>;
+              const summary = sections.map((section) => `${section.implicit ? "Unsectioned" : section.name}: ${section.questionTypes.map((item) => `${item.label} ${item.count ?? "?"} offered/${item.attempt ?? "?"} attempt × ${item.marksEach ?? "?"}`).join(", ")}`).join(" · ");
+              return <li key={template.id} className="py-4 first:pt-0 last:pb-0"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><h3 className="font-medium text-[#1f2d27]">{template.name}</h3><p className="mt-1 text-sm text-[#5a6a62]">{totals.totalQuestions ?? "Cannot verify"} questions offered · {totals.totalMarks ?? "Cannot verify"} calculated marks{template.maximumMarks !== null ? ` · Paper header: ${template.maximumMarks} marks` : ""}</p><p className="mt-1 text-xs text-[#718078]">{summary || "No question structure"}</p><div className="mt-3"><TemplateActions templateId={template.id} templateName={template.name} /></div></div><time className="text-xs text-[#718078]">{template.updatedAt.toLocaleDateString()}</time></div></li>;
             })}</ul> : <div className="rounded-2xl bg-[#f7faf7] p-8 text-center"><p className="text-sm text-[#5a6a62]">No test templates yet. Create one manually or choose a document from your Library.</p><Button href="/generate" className="mt-5">Create your first test</Button></div>}
+          </div>
+          <div className="mt-6 rounded-3xl border border-[#e4eae5] bg-white p-6 shadow-sm shadow-[#edf3ee] md:p-8">
+            <div className="mb-5"><h2 className="text-lg font-semibold text-[#1f2d27]">Generated papers</h2><p className="mt-1 text-sm text-[#5a6a62]">Generated drafts and their saved resource allocation.</p></div>
+            {generatedPapers.length ? <ul className="divide-y divide-[#edf1ee]">{generatedPapers.map((record) => {
+              const paper = record.paper as { title?: string; totalMarks?: number };
+              return <li key={record.id} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"><div><p className="font-medium">{paper.title || "Generated test paper"}</p><p className="mt-1 text-xs text-[#718078]">{record.status}{typeof paper.totalMarks === "number" ? ` · ${paper.totalMarks} marks` : ""} · {record.updatedAt.toLocaleString()}</p></div><Link href={`/generate?paper=${encodeURIComponent(record.id)}`} className="rounded-lg border border-[#d8e0d9] px-3 py-2 text-sm font-medium text-[#2f6f4b] hover:bg-[#f3f7f4]">{record.status === "failed" ? "Review failure" : "Open paper"}</Link></li>;
+            })}</ul> : <p className="text-sm text-[#718078]">No generated papers yet.</p>}
           </div>
         </div>
       </div>
